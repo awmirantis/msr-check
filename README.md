@@ -21,3 +21,8 @@ The storage location is typically at `/var/lib/docker/volumes/dtr-registry-54170
 ```bash
 docker run --rm --net dtr-ol -v <PATH_TO_STORAGE>:/storage -v dtr-ca-$REPLICA_ID:/ca awmirantis/msr-check missing_blobs  --replica_id  $REPLICA_ID
 ```
+#### Optional parameters
+- `-o` Specify the filename to output the results to.  This requires adding the volume `/out`:
+```bash
+docker run --rm --net dtr-ol -v ~:/out -v <PATH_TO_STORAGE>:/storage -v dtr-ca-$REPLICA_ID:/ca awmirantis/msr-check missing_blobs  --replica_id  $REPLICA_ID -o foo.json
+```

@@ -46,6 +46,7 @@ type Tags struct {
 
 func Run(cliContext *cli.Context) error {
 	replicaID := cliContext.String("replica_id")
+	outputFile := cliContext.String("o")
 	session, err := util.GetSession(replicaID)
 	if err != nil {
 		return fmt.Errorf("could not get conenct to rethinkdb: %s", err)
@@ -81,7 +82,17 @@ func Run(cliContext *cli.Context) error {
 	if err != nil {
 		return fmt.Errorf("could not marshal json object: %s", err)
 	}
-	fmt.Printf("%s", string(jsonData))
+	if outputFile == "" {
+		fmt.Printf("%s", string(jsonData))
+	} else {
+		if outputFile != "" {
+			filePath := fmt.Sprintf("/out/%s", outputFile)
+			err = os.WriteFile(filePath, jsonData, 0666)
+			if err != nil {
+				return fmt.Errorf("failed to write to file: '%s' err: %s", filePath, err)
+			}
+		}
+	}
 	return nil
 }
 

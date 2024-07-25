@@ -18,17 +18,19 @@ func main() {
 			Flags: []cli.Flag{
 				cli.StringFlag{
 					Name:     "replica_id",
-					Usage:    "replica_id of the rethinkdb",
+					Usage:    "Replica ID of the rethinkdb",
+					Required: true,
+				},
+				cli.StringFlag{
+					Name:     "o",
+					Usage:    "Filename to output results to. Requires the volume :/out",
 					Required: true,
 				},
 			},
 		},
 	}
-	app.Name = "DTRCheck"
+	app.Name = "MSRCheck"
 	if err := app.Run(os.Args); err != nil {
 		log.Fatal(err)
 	}
 }
-
-// REPLICA_ID=$(docker ps --filter name=dtr-rethinkdb --format "{{ .Names }}" | cut -d"-" -f3)
-// docker run --rm -i --net dtr-ol -e DTR_REPLICA_ID=${REPLICA_ID} -v dtr-ca-$REPLICA_ID:/tls awmirantis
