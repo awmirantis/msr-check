@@ -76,12 +76,12 @@ func Run(cliContext *cli.Context) error {
 		} else {
 			bm.missingBlobs[idx].Repositories = repos
 		}
-		jsonData, err := json.Marshal(bm.missingBlobs)
-		if err != nil {
-			return fmt.Errorf("could no marshal json object: %s", err)
-		}
-		fmt.Printf("%s", string(jsonData))
 	}
+	jsonData, err := json.Marshal(bm.missingBlobs)
+	if err != nil {
+		return fmt.Errorf("could not marshal json object: %s", err)
+	}
+	fmt.Printf("%s", string(jsonData))
 	return nil
 }
 
