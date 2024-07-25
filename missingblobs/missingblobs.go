@@ -50,27 +50,33 @@ func Run(cliContext *cli.Context) error {
 	if err != nil {
 		return fmt.Errorf("could not get conenct to rethinkdb: %s", err)
 	}
-	mb := BlobManager{
+	bm := BlobManager{
 		session:   session,
 		replicaID: replicaID,
 		shaToPK:   make(map[string][]string),
 	}
-	err = mb.makeShaMap()
+
+	err = bm.findMissingBlobs()
+	if err != nil {
+		return fmt.Errorf("failed to retrieve missing blobs: %s", err)
+	}
+	if len(bm.missingBlobs) == 0 {
+		log.Errorf("No missing blobs found")
+		return nil
+	}
+
+	err = bm.makeShaMap()
 	if err != nil {
 		return fmt.Errorf("failed to make SHA mapping table: %s", err)
 	}
-	err = mb.findMissingBlobs()
-	if err != nil {
-		return fmt.Errorf("failed to find missing blobs: %s", err)
-	}
-	for idx := range mb.missingBlobs {
-		repos, ok := mb.shaToPK[mb.missingBlobs[idx].Sha256sum]
+	for idx := range bm.missingBlobs {
+		repos, ok := bm.shaToPK[bm.missingBlobs[idx].Sha256sum]
 		if !ok {
-			log.Errorf("could not find repo for blob: %s", mb.missingBlobs[idx].ID)
+			log.Errorf("could not find repo for blob: %s", bm.missingBlobs[idx].ID)
 		} else {
-			mb.missingBlobs[idx].Repositories = repos
+			bm.missingBlobs[idx].Repositories = repos
 		}
-		jsonData, err := json.Marshal(mb.missingBlobs)
+		jsonData, err := json.Marshal(bm.missingBlobs)
 		if err != nil {
 			return fmt.Errorf("could no marshal json object: %s", err)
 		}
@@ -79,9 +85,9 @@ func Run(cliContext *cli.Context) error {
 	return nil
 }
 
-func (mb *BlobManager) findMissingBlobs() error {
+func (bm *BlobManager) findMissingBlobs() error {
 	q := r.DB("dtr2").Table("blobs").Pluck("sha256sum", "id")
-	cursor, err := q.Run(mb.session)
+	cursor, err := q.Run(bm.session)
 	if err != nil {
 		return fmt.Errorf("failed to query blobs table: %s", err)
 	}
@@ -95,15 +101,15 @@ func (mb *BlobManager) findMissingBlobs() error {
 		blobPath := fmt.Sprintf("/storage/docker/registry/v2/blobs/id/%s/%s/data", blob.ID[0:2], blob.ID)
 		_, err := os.Stat(blobPath)
 		if err != nil {
-			mb.missingBlobs = append(mb.missingBlobs, blob)
+			bm.missingBlobs = append(bm.missingBlobs, blob)
 		}
 	}
 	return nil
 }
 
-func (mb *BlobManager) makeShaMap() error {
+func (bm *BlobManager) makeShaMap() error {
 	q := r.DB("dtr2").Table("manifests").Pluck("pk", "digest", "repository", "layers")
-	cursor, err := q.Run(mb.session)
+	cursor, err := q.Run(bm.session)
 	if err != nil {
 		return fmt.Errorf("failed to query manifests table: %s", err)
 	}
@@ -114,20 +120,20 @@ func (mb *BlobManager) makeShaMap() error {
 		return fmt.Errorf("failed to read manifests table: %s", err)
 	}
 	for _, manifest := range manifests {
-		repo, err := mb.getRepoFromPK(manifest.PK)
+		repo, err := bm.getRepoFromPK(manifest.PK)
 		if err != nil {
 			return fmt.Errorf("failed to get repo from SHA key: %s", err)
 		}
 		for _, layer := range manifest.Layers {
-			mb.shaToPK[layer.Digest] = append(mb.shaToPK[layer.Digest], repo)
+			bm.shaToPK[layer.Digest] = append(bm.shaToPK[layer.Digest], repo)
 		}
 	}
 	return nil
 }
 
-func (mb *BlobManager) getRepoFromPK(pk string) (string, error) {
+func (bm *BlobManager) getRepoFromPK(pk string) (string, error) {
 	q := r.DB("dtr2").Table("tags").Filter(map[string]interface{}{"digestPK": pk}).Pluck("name", "repository")
-	cursor, err := q.Run(mb.session)
+	cursor, err := q.Run(bm.session)
 	if err != nil {
 		return "", fmt.Errorf("could not find tag: %s", err)
 	}
