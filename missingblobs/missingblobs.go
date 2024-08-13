@@ -27,10 +27,11 @@ type ManifestLayer struct {
 }
 
 type Manifest struct {
-	PK         string           `gorethink:"pk"`
-	Digest     string           `gorethink:"digest"`
-	Repository string           `gorethink:"repository"`
-	Layers     []*ManifestLayer `gorethink:"layers"`
+	PK           string           `gorethink:"pk"`
+	Digest       string           `gorethink:"digest"`
+	Repository   string           `gorethink:"repository"`
+	Layers       []*ManifestLayer `gorethink:"layers"`
+	ConfigDigest string           `gorethink:"configDigest"`
 }
 
 type Blob struct {
@@ -73,7 +74,7 @@ func Run(cliContext *cli.Context) error {
 	for idx := range bm.missingBlobs {
 		repos, ok := bm.shaToPK[bm.missingBlobs[idx].Sha256sum]
 		if !ok {
-			log.Errorf("could not find repo for blob: %s", bm.missingBlobs[idx].ID)
+			log.Infof("could not find repo for blob: %s sha: %s", bm.missingBlobs[idx].ID, bm.missingBlobs[idx].Sha256sum)
 		} else {
 			bm.missingBlobs[idx].Repositories = repos
 		}
@@ -119,7 +120,7 @@ func (bm *BlobManager) findMissingBlobs() error {
 }
 
 func (bm *BlobManager) makeShaMap() error {
-	q := r.DB("dtr2").Table("manifests").Pluck("pk", "digest", "repository", "layers")
+	q := r.DB("dtr2").Table("manifests").Pluck("pk", "digest", "repository", "layers", "configDigest")
 	cursor, err := q.Run(bm.session)
 	if err != nil {
 		return fmt.Errorf("failed to query manifests table: %s", err)
@@ -134,6 +135,9 @@ func (bm *BlobManager) makeShaMap() error {
 		repo, err := bm.getRepoFromPK(manifest.PK)
 		if err != nil {
 			return fmt.Errorf("failed to get repo from SHA key: %s", err)
+		}
+		if manifest.ConfigDigest != "" {
+			bm.shaToPK[manifest.ConfigDigest] = append(bm.shaToPK[manifest.ConfigDigest], repo)
 		}
 		for _, layer := range manifest.Layers {
 			bm.shaToPK[layer.Digest] = append(bm.shaToPK[layer.Digest], repo)
@@ -151,7 +155,8 @@ func (bm *BlobManager) getRepoFromPK(pk string) (string, error) {
 	repo := Tags{}
 	err = cursor.One(&repo)
 	if err != nil {
-		return "", fmt.Errorf("failed to find tag: %s", err)
+		log.Warnf("Failed to find tag for PK: %s error: %s", pk, err)
+		return "", nil
 	}
 	return fmt.Sprintf("%s:%s", repo.Repository, repo.Name), nil
 }
