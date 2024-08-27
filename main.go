@@ -26,6 +26,14 @@ func main() {
 					Usage:    "Filename to output results to. Requires the volume :/out",
 					Required: true,
 				},
+				cli.StringFlag{
+					Name:  "org",
+					Usage: "Organization name of blobs to process",
+				},
+				cli.StringFlag{
+					Name:  "repo",
+					Usage: "Repository name of blobs to process",
+				},
 			},
 		},
 	}

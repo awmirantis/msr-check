@@ -15,6 +15,9 @@ type BlobManager struct {
 	session      *r.Session
 	shaToPK      map[string][]string
 	replicaID    string
+	orgName      string
+	repoName     string
+	blobs        []Blob
 	missingBlobs []Blob
 }
 
@@ -54,8 +57,11 @@ func Run(cliContext *cli.Context) error {
 	}
 	bm := BlobManager{
 		session:   session,
-		replicaID: replicaID,
+		replicaID: cliContext.String("replica_id"),
+		orgName:   cliContext.GlobalString("org"),
+		repoName:  cliContext.GlobalString("repo"),
 		shaToPK:   make(map[string][]string),
+		blobs:     []Blob{},
 	}
 
 	err = bm.findMissingBlobs()
@@ -97,29 +103,75 @@ func Run(cliContext *cli.Context) error {
 	return nil
 }
 
-func (bm *BlobManager) findMissingBlobs() error {
-	q := r.DB("dtr2").Table("blobs").Pluck("sha256sum", "id")
+func (bm *BlobManager) getAllBlobs() error {
+	q := r.DB("dtr2").Table("blobs").Pluck("pk", "id")
 	cursor, err := q.Run(bm.session)
 	if err != nil {
 		return fmt.Errorf("failed to query blobs table: %s", err)
 	}
 	defer cursor.Close()
-	blobs := []Blob{}
-	err = cursor.All(&blobs)
+	err = cursor.All(&bm.blobs)
 	if err != nil {
 		return fmt.Errorf("failed to read blobs table: %s", err)
-	}
-	for _, blob := range blobs {
-		blobPath := fmt.Sprintf("/storage/docker/registry/v2/blobs/id/%s/%s/data", blob.ID[0:2], blob.ID)
-		_, err := os.Stat(blobPath)
-		if err != nil {
-			bm.missingBlobs = append(bm.missingBlobs, blob)
-		}
 	}
 	return nil
 }
 
+func (bm *BlobManager) getBlobsByOrgRepo() error {
+	q := r.DB("dtr2").Table("blob_links").Filter(
+		func(term r.Term) r.Term {
+			if bm.orgName != "" && bm.repoName != "" {
+				return term.Field("namespace").Eq(bm.orgName).And().Field("repository").Eq(bm.repoName)
+			} else if bm.orgName != "" {
+				return term.Field("namespace").Eq(bm.orgName)
+			}
+			return term.Field("repository").Eq(bm.repoName)
+		}).EqJoin("digest", r.Table("blobs")).Zip().Pluck("pk", "id")
+	cursor, err := q.Run(bm.session)
+	if err != nil {
+		return fmt.Errorf("failed to query blob_links table: %s", err)
+	}
+	defer cursor.Close()
+	err = cursor.All(&bm.blobs)
+	if err != nil {
+		return fmt.Errorf("failed to read blobs table: %s", err)
+	}
+	return nil
+}
+
+func (bm *BlobManager) findMissingBlobs() error {
+	log.Error("Reading blobs table.")
+	var err error
+	if bm.orgName != "" || bm.repoName != "" {
+		err = bm.getBlobsByOrgRepo()
+	} else {
+		err = bm.getAllBlobs()
+	}
+	if err != nil {
+		return fmt.Errorf("failed to read blobs table: %s", err)
+	}
+
+	blobCount := len(bm.blobs)
+	blobIncrement := max(blobCount/10, 1)
+	log.Error("Scanning file system for blobs.")
+	for idx, blob := range bm.blobs {
+		if idx%blobIncrement == 0 {
+			log.Errorf("Checking if a blob is missing: %d of %d", idx+1, blobCount)
+		}
+		if len(blob.ID) > 1 {
+			blobPath := fmt.Sprintf("/storage/docker/registry/v2/blobs/id/%s/%s/data", blob.ID[0:2], blob.ID)
+			_, err := os.Stat(blobPath)
+			if err != nil {
+				bm.missingBlobs = append(bm.missingBlobs, blob)
+			}
+		}
+	}
+	log.Errorf("Missing blobs found: %d", len(bm.missingBlobs))
+	return nil
+}
+
 func (bm *BlobManager) makeShaMap() error {
+	log.Error("Reading manifests table.")
 	q := r.DB("dtr2").Table("manifests").Pluck("pk", "digest", "repository", "layers", "configDigest")
 	cursor, err := q.Run(bm.session)
 	if err != nil {
@@ -131,6 +183,7 @@ func (bm *BlobManager) makeShaMap() error {
 	if err != nil {
 		return fmt.Errorf("failed to read manifests table: %s", err)
 	}
+	log.Error("Processing manifests.")
 	for _, manifest := range manifests {
 		repo, err := bm.getRepoFromPK(manifest.PK)
 		if err != nil {
