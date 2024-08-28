@@ -58,8 +58,8 @@ func Run(cliContext *cli.Context) error {
 	bm := BlobManager{
 		session:   session,
 		replicaID: cliContext.String("replica_id"),
-		orgName:   cliContext.GlobalString("org"),
-		repoName:  cliContext.GlobalString("repo"),
+		orgName:   cliContext.String("org"),
+		repoName:  cliContext.String("repo"),
 		shaToPK:   make(map[string][]string),
 		blobs:     []Blob{},
 	}
@@ -104,7 +104,7 @@ func Run(cliContext *cli.Context) error {
 }
 
 func (bm *BlobManager) getAllBlobs() error {
-	q := r.DB("dtr2").Table("blobs").Pluck("pk", "id")
+	q := r.DB("dtr2").Table("blobs").Pluck("sha256sum", "id")
 	cursor, err := q.Run(bm.session)
 	if err != nil {
 		return fmt.Errorf("failed to query blobs table: %s", err)
@@ -121,12 +121,12 @@ func (bm *BlobManager) getBlobsByOrgRepo() error {
 	q := r.DB("dtr2").Table("blob_links").Filter(
 		func(term r.Term) r.Term {
 			if bm.orgName != "" && bm.repoName != "" {
-				return term.Field("namespace").Eq(bm.orgName).And().Field("repository").Eq(bm.repoName)
+				return term.Field("namespace").Eq(bm.orgName).And(term.Field("repository").Eq(bm.repoName))
 			} else if bm.orgName != "" {
 				return term.Field("namespace").Eq(bm.orgName)
 			}
 			return term.Field("repository").Eq(bm.repoName)
-		}).EqJoin("digest", r.Table("blobs")).Zip().Pluck("pk", "id")
+		}).EqJoin("digest", r.DB("dtr2").Table("blobs")).Zip().Pluck("sha256sum", "id")
 	cursor, err := q.Run(bm.session)
 	if err != nil {
 		return fmt.Errorf("failed to query blob_links table: %s", err)
