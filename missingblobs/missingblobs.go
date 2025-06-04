@@ -214,7 +214,7 @@ func (bm *BlobManager) getRepoFromPK(pk string) (string, error) {
 	repo := Tags{}
 	err = cursor.One(&repo)
 	if err != nil {
-		log.Errorf("Failed to find tag for PK: %s error: %s", pk, err)
+		log.Warnf("Failed to find tag for PK: %s error: %s", pk, err)
 		return "", nil
 	}
 	return fmt.Sprintf("%s:%s", repo.Repository, repo.Name), nil
