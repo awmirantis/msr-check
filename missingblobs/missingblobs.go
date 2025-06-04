@@ -19,6 +19,7 @@ type BlobManager struct {
 	repoName     string
 	blobs        []Blob
 	missingBlobs []Blob
+	verbose      bool
 }
 
 type ManifestLayer struct {
@@ -62,6 +63,7 @@ func Run(cliContext *cli.Context) error {
 		repoName:  cliContext.String("repo"),
 		shaToPK:   make(map[string][]string),
 		blobs:     []Blob{},
+		verbose:   cliContext.Bool("v"),
 	}
 
 	err = bm.findMissingBlobs()
@@ -69,7 +71,6 @@ func Run(cliContext *cli.Context) error {
 		return fmt.Errorf("failed to retrieve missing blobs: %s", err)
 	}
 	if len(bm.missingBlobs) == 0 {
-		log.Errorf("No missing blobs found")
 		return nil
 	}
 
@@ -80,7 +81,7 @@ func Run(cliContext *cli.Context) error {
 	for idx := range bm.missingBlobs {
 		repos, ok := bm.shaToPK[bm.missingBlobs[idx].Sha256sum]
 		if !ok {
-			log.Infof("could not find repo for blob: %s sha: %s", bm.missingBlobs[idx].ID, bm.missingBlobs[idx].Sha256sum)
+			log.Errorf("could not find repo for blob: %s sha: %s", bm.missingBlobs[idx].ID, bm.missingBlobs[idx].Sha256sum)
 		} else {
 			bm.missingBlobs[idx].Repositories = repos
 		}
@@ -140,7 +141,7 @@ func (bm *BlobManager) getBlobsByOrgRepo() error {
 }
 
 func (bm *BlobManager) findMissingBlobs() error {
-	log.Error("Reading blobs table.")
+	log.Infof("Reading blobs table.")
 	var err error
 	if bm.orgName != "" || bm.repoName != "" {
 		err = bm.getBlobsByOrgRepo()
@@ -153,25 +154,29 @@ func (bm *BlobManager) findMissingBlobs() error {
 
 	blobCount := len(bm.blobs)
 	blobIncrement := max(blobCount/10, 1)
-	log.Error("Scanning file system for blobs.")
+	log.Infof("Scanning file system for blobs (%d).", blobCount)
 	for idx, blob := range bm.blobs {
-		if idx%blobIncrement == 0 {
-			log.Errorf("Checking if a blob is missing: %d of %d", idx+1, blobCount)
+		if idx%blobIncrement == 0 && !bm.verbose {
+			log.Infof("Checking if a blob is missing: %d of %d", idx+1, blobCount)
 		}
 		if len(blob.ID) > 1 {
 			blobPath := fmt.Sprintf("/storage/docker/registry/v2/blobs/id/%s/%s/data", blob.ID[0:2], blob.ID)
-			_, err := os.Stat(blobPath)
-			if err != nil {
+			stat, err := os.Stat(blobPath)
+
+			if err != nil || stat.Size() == 0 {
+				util.LogV(bm.verbose, "Blob %s not found at %s", blob.ID, blobPath)
 				bm.missingBlobs = append(bm.missingBlobs, blob)
+			} else {
+				util.LogV(bm.verbose, "Blob %s found at %s", blob.ID, blobPath)
 			}
 		}
 	}
-	log.Errorf("Missing blobs found: %d", len(bm.missingBlobs))
+	log.Infof("Missing blobs found: %d", len(bm.missingBlobs))
 	return nil
 }
 
 func (bm *BlobManager) makeShaMap() error {
-	log.Error("Reading manifests table.")
+	log.Infof("Reading manifests table.")
 	q := r.DB("dtr2").Table("manifests").Pluck("pk", "digest", "repository", "layers", "configDigest")
 	cursor, err := q.Run(bm.session)
 	if err != nil {
@@ -183,7 +188,7 @@ func (bm *BlobManager) makeShaMap() error {
 	if err != nil {
 		return fmt.Errorf("failed to read manifests table: %s", err)
 	}
-	log.Error("Processing manifests.")
+	log.Infof("Processing manifests.")
 	for _, manifest := range manifests {
 		repo, err := bm.getRepoFromPK(manifest.PK)
 		if err != nil {
@@ -196,6 +201,7 @@ func (bm *BlobManager) makeShaMap() error {
 			bm.shaToPK[layer.Digest] = append(bm.shaToPK[layer.Digest], repo)
 		}
 	}
+	util.LogV(bm.verbose, "Digest count: %d", len(bm.shaToPK))
 	return nil
 }
 
@@ -208,7 +214,7 @@ func (bm *BlobManager) getRepoFromPK(pk string) (string, error) {
 	repo := Tags{}
 	err = cursor.One(&repo)
 	if err != nil {
-		log.Warnf("Failed to find tag for PK: %s error: %s", pk, err)
+		log.Errorf("Failed to find tag for PK: %s error: %s", pk, err)
 		return "", nil
 	}
 	return fmt.Sprintf("%s:%s", repo.Repository, repo.Name), nil

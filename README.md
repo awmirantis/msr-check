@@ -25,5 +25,6 @@ docker run --rm --net dtr-ol -v <PATH_TO_STORAGE>:/storage -v dtr-ca-$REPLICA_ID
 - `-o` Specify the filename to output the results to.  This requires adding the volume `/out`:
 - `--org` Specify the org (namespace) of the repo to check for missing blobs
 - `--repo` Specify the repository name to check for missing blobs
+- `-v` Verbose logging, warning: execessive logging if scanning entire repo.
 ```bash
 docker run --rm --net dtr-ol -v ~:/out -v <PATH_TO_STORAGE>:/storage -v dtr-ca-$REPLICA_ID:/ca awmirantis/msr-check missing_blobs  --replica_id  $REPLICA_ID -o foo.json --org mirantis --repo msr

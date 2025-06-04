@@ -34,6 +34,10 @@ func main() {
 					Name:  "repo",
 					Usage: "Repository name of blobs to process",
 				},
+				cli.BoolFlag{
+					Name:  "v",
+					Usage: "Enable verbose logging",
+				},
 			},
 		},
 	}
