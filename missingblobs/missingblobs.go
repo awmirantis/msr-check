@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/awmirantis/dtr_check/util"
 	log "github.com/sirupsen/logrus"
@@ -190,6 +191,8 @@ func (bm *BlobManager) makeShaMap() error {
 	}
 	log.Infof("Processing manifests.")
 	for _, manifest := range manifests {
+		sha := strings.Split(manifest.PK, "@")
+		manifest.PK = fmt.Sprintf("%s@%s", manifest.Repository, sha[1])
 		repo, err := bm.getRepoFromPK(manifest.PK)
 		if err != nil {
 			return fmt.Errorf("failed to get repo from SHA key: %s", err)
