@@ -42,6 +42,7 @@ type Manifest struct {
 type Blob struct {
 	Sha256sum    string `gorethink:"sha256sum"`
 	ID           string `gorethink:"id"`
+	MediaType    string `gorethink:"mediaType"`
 	Repositories []string
 }
 
@@ -55,16 +56,17 @@ func Run(cliContext *cli.Context) error {
 	outputFile := cliContext.String("o")
 	session, err := util.GetSession(replicaID)
 	if err != nil {
-		return fmt.Errorf("could not get conenct to rethinkdb: %s", err)
+		return fmt.Errorf("could not get connect to rethinkdb: %s", err)
 	}
 	bm := BlobManager{
-		session:   session,
-		replicaID: cliContext.String("replica_id"),
-		orgName:   cliContext.String("org"),
-		repoName:  cliContext.String("repo"),
-		shaToPK:   make(map[string][]string),
-		blobs:     []Blob{},
-		verbose:   cliContext.Bool("v"),
+		session:      session,
+		replicaID:    cliContext.String("replica_id"),
+		orgName:      cliContext.String("org"),
+		repoName:     cliContext.String("repo"),
+		shaToPK:      make(map[string][]string),
+		blobs:        []Blob{},
+		missingBlobs: []Blob{},
+		verbose:      cliContext.Bool("v"),
 	}
 
 	err = bm.findMissingBlobs()
@@ -82,7 +84,7 @@ func Run(cliContext *cli.Context) error {
 	for idx := range bm.missingBlobs {
 		repos, ok := bm.shaToPK[bm.missingBlobs[idx].Sha256sum]
 		if !ok {
-			log.Errorf("could not find repo for blob: %s sha: %s", bm.missingBlobs[idx].ID, bm.missingBlobs[idx].Sha256sum)
+			log.Errorf("could not find repo for blob: %s sha: %s mediaType: %s", bm.missingBlobs[idx].ID, bm.missingBlobs[idx].Sha256sum, bm.missingBlobs[idx].MediaType)
 		} else {
 			bm.missingBlobs[idx].Repositories = repos
 		}
@@ -106,7 +108,7 @@ func Run(cliContext *cli.Context) error {
 }
 
 func (bm *BlobManager) getAllBlobs() error {
-	q := r.DB("dtr2").Table("blobs").Pluck("sha256sum", "id")
+	q := r.DB("dtr2").Table("blobs").Pluck("sha256sum", "id", "mediaType")
 	cursor, err := q.Run(bm.session)
 	if err != nil {
 		return fmt.Errorf("failed to query blobs table: %s", err)
@@ -120,15 +122,21 @@ func (bm *BlobManager) getAllBlobs() error {
 }
 
 func (bm *BlobManager) getBlobsByOrgRepo() error {
-	q := r.DB("dtr2").Table("blob_links").Filter(
-		func(term r.Term) r.Term {
-			if bm.orgName != "" && bm.repoName != "" {
-				return term.Field("namespace").Eq(bm.orgName).And(term.Field("repository").Eq(bm.repoName))
-			} else if bm.orgName != "" {
-				return term.Field("namespace").Eq(bm.orgName)
-			}
-			return term.Field("repository").Eq(bm.repoName)
-		}).EqJoin("digest", r.DB("dtr2").Table("blobs")).Zip().Pluck("sha256sum", "id")
+	filter := make(map[string]interface{})
+	if bm.orgName != "" {
+		filter["namespace"] = bm.orgName
+	}
+	if bm.repoName != "" {
+		filter["repository"] = bm.repoName
+	}
+	if len(filter) == 0 {
+		return fmt.Errorf("orgName or repoName must be non-empty")
+	}
+	q := r.DB("dtr2").Table("blob_links").Filter(filter).
+		EqJoin("digest", r.DB("dtr2").Table("blobs")).
+		Zip().
+		Pluck("sha256sum", "id", "mediaType")
+
 	cursor, err := q.Run(bm.session)
 	if err != nil {
 		return fmt.Errorf("failed to query blob_links table: %s", err)
@@ -163,9 +171,8 @@ func (bm *BlobManager) findMissingBlobs() error {
 		if len(blob.ID) > 1 {
 			blobPath := fmt.Sprintf("/storage/docker/registry/v2/blobs/id/%s/%s/data", blob.ID[0:2], blob.ID)
 			stat, err := os.Stat(blobPath)
-
 			if err != nil || stat.Size() == 0 {
-				util.LogV(bm.verbose, "Blob %s not found at %s", blob.ID, blobPath)
+				util.LogV(bm.verbose, "Blob %s not found at %s error: %v", blob.ID, blobPath, err)
 				bm.missingBlobs = append(bm.missingBlobs, blob)
 			} else {
 				util.LogV(bm.verbose, "Blob %s found at %s", blob.ID, blobPath)
@@ -191,17 +198,22 @@ func (bm *BlobManager) makeShaMap() error {
 	}
 	log.Infof("Processing manifests.")
 	for _, manifest := range manifests {
-		sha := strings.Split(manifest.PK, "@")
-		manifest.PK = fmt.Sprintf("%s@%s", manifest.Repository, sha[1])
+		if manifest.Repository != "" {
+			sha := strings.Split(manifest.PK, "@")
+			manifest.PK = fmt.Sprintf("%s@%s", manifest.Repository, sha[1])
+		}
 		repo, err := bm.getRepoFromPK(manifest.PK)
 		if err != nil {
-			return fmt.Errorf("failed to get repo from SHA key: %s", err)
+			util.LogV(bm.verbose, "failed to get repo from SHA key: %s", err)
+			continue
 		}
 		if manifest.ConfigDigest != "" {
 			bm.shaToPK[manifest.ConfigDigest] = append(bm.shaToPK[manifest.ConfigDigest], repo)
 		}
 		for _, layer := range manifest.Layers {
-			bm.shaToPK[layer.Digest] = append(bm.shaToPK[layer.Digest], repo)
+			if layer != nil && layer.Digest != "" {
+				bm.shaToPK[layer.Digest] = append(bm.shaToPK[layer.Digest], repo)
+			}
 		}
 	}
 	util.LogV(bm.verbose, "Digest count: %d", len(bm.shaToPK))
@@ -217,7 +229,7 @@ func (bm *BlobManager) getRepoFromPK(pk string) (string, error) {
 	repo := Tags{}
 	err = cursor.One(&repo)
 	if err != nil {
-		log.Warnf("Failed to find tag for PK: %s error: %s", pk, err)
+		util.LogV(bm.verbose, "Failed to find tag for PK: %s error: %s", pk, err)
 		return "", nil
 	}
 	return fmt.Sprintf("%s:%s", repo.Repository, repo.Name), nil
