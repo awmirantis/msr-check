@@ -6,15 +6,8 @@ import (
 	"fmt"
 	"os"
 
-	log "github.com/sirupsen/logrus"
 	r "gopkg.in/rethinkdb/rethinkdb-go.v6"
 )
-
-func LogV(verbose bool, pattern string, args ...interface{}) {
-	if verbose {
-		log.Infof(pattern, args...)
-	}
-}
 
 func GetTlsConfig() (*tls.Config, error) {
 	ca, err := os.ReadFile("/ca/rethink/cert.pem")

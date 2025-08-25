@@ -34,9 +34,17 @@ func main() {
 					Name:  "repo",
 					Usage: "Repository name of blobs to process",
 				},
+				cli.StringFlag{
+					Name:  "tag",
+					Usage: "Tag name of blobs to process",
+				},
 				cli.BoolFlag{
 					Name:  "v",
-					Usage: "Enable verbose logging",
+					Usage: "Verbose logging written to file msr-check.log",
+				},
+				cli.BoolFlag{
+					Name:  "json",
+					Usage: "Produces JSON output instead of a text list",
 				},
 			},
 		},
